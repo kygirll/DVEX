@@ -1,0 +1,140 @@
+#!/bin/bash
+
+NAME=`basename $0`
+USAGE="Usage: $NAME [option] version [address]
+
+Parameters:
+  version   Version of TC to run. TC jars must be available in 
+            \$TCSHELL/{version} directory.
+  address   Address to connect to (default is toschart2:7411)
+
+Options:
+  -c name   Use predefined configuration. Configuration files must 
+            be available in \$TCSHELL/config/{name}/TOS_CHARTING 
+            directory.
+  -C        Use specific color scheme (one of: Dark, Bright, Metal,
+            High_Contrast_Dark, High_Contrast_Bright, Old_TOS)
+  -f        Use fake quotes
+  -F        Use specific font size (one of: SMALL, MEDIUM, LARGE, XL, XXL)
+  -h        Display this help message
+  -j        Use Java from specific directory
+  -l        Use specific look and fell (one of: TOSPLAF, SEAHORSE)
+  -s        Statistics output period, in seconds (default is 300)
+  -S        Use specific spacing (one of: NORMAL, ROOMY, TIGHT)
+  -t        Start thinkScript snapshot testing tool instead of chart shell
+  -x        Automatic exit, in seconds
+
+Shell variables:
+  JAVAROOT     Directory with different Java versions
+  TC_JAVA_OPT  JVM options"
+
+TEMP=`getopt -o c:C:fF:hl:s:S:x: -l config:,colorscheme:,fake,fontsize:,help,lookandfell:,stat:,spacing:,autoexit: -- "$@"`
+
+eval set -- "$TEMP"
+while true ; do
+        case "$1" in
+                -c|--config)       CONF="$2" ; shift 2 ;;
+                -C|--colorscheme)  COLORSCHEME="$2" ; shift 2 ;;
+                -f|--fake)         FAKE="yes" ; shift ;;
+                -F|--fontsize)     FONTSIZE="$2" ; shift 2 ;;
+                -h|--help)         HELP="yes" ; shift ;;
+                -l|--lookandfeel)  LOOKNFEEL="$2" ; shift 2 ;;
+                -s|--stat)         STATPERIOD="$2" ; shift 2 ;;
+                -S|--spacing)      SPACING="$2" ; shift 2 ;;
+                -x|--autoexit)     AUTOEXIT="$2" ; shift 2 ;;
+                --) shift ; break ;;
+                *) echo "Internal error!" ; exit 1 ;;
+        esac
+done
+VERSION="$1"
+ADDRESS="$2"
+
+if [ "$HELP" == "yes" ]; then
+  echo "$USAGE"
+  exit
+fi
+if [ -z "$TCSHELL" ]; then
+  echo "TCSHELL variable must be set"
+  exit 1
+fi
+if [ -z "$ADDRESS" ]; then
+  ADDRESS="toschart2$DEVEXDOMAIN:7411"
+fi
+if [ -z "$LOOKNFEEL" ]; then
+   LOOKNFEEL="SEAHORSE"
+fi
+if [ -z "$COLORSCHEME" ]; then
+   COLORSCHEME="Dark"
+fi
+if [ -z "$FONTSIZE" ]; then
+   FONTSIZE="MEDIUM"
+fi
+if [ -z "$SPACING" ]; then
+   SPACING="ROOMY"
+fi
+if [ "$FAKE" == "yes" ]; then
+  ADDRESS="fake"
+fi
+
+CP=`tc_cp $VERSION`
+#OPTIONS="-showversion -ea -cp $CP"
+OPTIONS="-showversion -cp $CP"
+OPTIONS="$OPTIONS $TC_JAVA_OPT"
+
+if [ -n "$STATPERIOD" ]; then
+  OPTIONS="$OPTIONS -DHistogram.stat_cycle=$STATPERIOD"
+fi
+if [ -n "$AUTOEXIT" ]; then
+  OPTIONS="$OPTIONS -Dauto.exit=$AUTOEXIT"
+fi
+
+CONFFILE="$TCSHELL/toschart.last"
+
+if [ -z "$VERSION" -a -r "$CONFFILE" ]; then
+	VERSION=`cat "$CONFFILE"`
+fi
+if [ -z "$VERSION" ]; then
+  echo "$USAGE"
+  exit 2
+fi
+
+if [ ! -d "$TCSHELL/$VERSION" ] ; then
+  echo "No such version"
+  exit 1
+fi
+
+CONFDIR="$TCSHELL/config"
+if [ -n "$CONF" ]; then
+  if [ ! -d "$CONFDIR/$CONF/TOS_CHARTING" ]; then
+    echo "Configuration $CONF not found."
+	exit 1
+  fi
+  rm -rf "$TCSHELL/$VERSION/TOS_CHARTING"
+  cp -r "$CONFDIR/$CONF/TOS_CHARTING" "$TCSHELL/$VERSION"
+fi
+
+if unzip -l "$TCSHELL/$VERSION"/toschart.test.jar | grep -q com/devexperts/toschart/allmixins/sample/Shell.class ; then
+  MAIN_CLASS=com.devexperts.toschart.allmixins.sample.Shell
+elif unzip -l "$TCSHELL/$VERSION"/toschart.test.jar | grep -q com/devexperts/toschart/patterns/sample/ShellWithPatterns.class ; then
+  MAIN_CLASS=com.devexperts.toschart.patterns.sample.ShellWithPatterns
+elif unzip -l "$TCSHELL/$VERSION"/toschart.test.jar | grep -q com/devexperts/toschart/sample/Shell.class ; then
+  MAIN_CLASS=com.devexperts.toschart.sample.Shell
+else
+  echo "Cannot find a known main class"
+  exit 1
+fi
+
+if [ -f "$TCSHELL/$VERSION/tos_seahorselaf.jar" ]; then
+  ARGUMENTS="$LOOKNFEEL $COLORSCHEME $FONTSIZE $SPACING"
+else
+  ARGUMENTS="$COLORSCHEME $FONTSIZE"
+fi
+
+if [ -z "$JAVA" ]; then
+  JAVA="java"
+fi
+
+cd "$TCSHELL/$VERSION"
+"$JAVA" $OPTIONS $MAIN_CLASS "$ADDRESS" "" $ARGUMENTS
+
+echo "$VERSION" >"$CONFFILE"
